@@ -109,9 +109,12 @@ class Remote(object):
         r.remote = self
         return r
 
-    def remote_mktemp(self, sudo=False):
+    def mktemp(self, sudo=False):
         """
         Make a remote temporary file 
+        
+        Returns: the name of the temp file created using
+                 tempfile.mkstemp
         """
         args = []
         if sudo:
@@ -128,62 +131,73 @@ class Remote(object):
         data = proc.stdout.getvalue()
         return data
 
-    def _set_remote_perms(self, tempf, perms):
+    def _chmod(self, temp_file_path, permissions):
+        """
+        Set permissions on the remote file specified.
+        """
         args = []
         args.extend([
             'sudo',
             'chmod',
-            perms,
-            tempf,
+            permissions,
+            temp_file_path,
             ])
         self.run(
             args=args,
             stdout=StringIO(),
             )
 
-    def _do_sftp_cmd(self, args, tempf, sudo=False):
+    def _sftp_get_file(self, args, temp_file_path, sudo=False):
+        """
+        Make the file read/writeable if sudo, then use the 
+        paramiko SFTPClient to copy the data from the remote
+        temp file.  Returns the file's content.
+        """
+        if sudo:
+            self._chmod(temp_file_path, '0666')
         self.run(
             args=args,
             stdout=StringIO(),
             )
-        if sudo:
-            self._set_remote_perms(tempf, '0666')
         conn = self.connect()
         transport = conn.get_transport()
         sftp = paramiko.SFTPClient.from_transport(transport)
-        with sftp.open(tempf, 'rb') as file_sftp:
+        with sftp.open(temp_file_path, 'rb') as file_sftp:
             result = file_sftp.read()
         return result
 
-    def copy_remote(self, path, sudo=False):
+    def get_file(self, path, sudo=False): 
         """
         Read a file from the remote host into memory.
         """
-        tempf = self.remote_mktemp()
-        args = [
+        temp_file_path = self.mktemp()
+        args = []
+        if sudo:
+            args.append('sudo')
+        args.extend([
             'sudo',
             'cp',
             path,
-            tempf,
-            ]
-        return self._do_sftp_cmd(args, tempf, sudo)
+            temp_file_path,
+            ])
+        return self._sftp_get_file(args, temp_file_path, sudo)
 
     def tar_remote(self, path, sudo=False, zip_flag=False):
         """
         Tar a remote file.
         """
         zip_fld = lambda x: 'cz' if x else 'c'
-        tempf = self.remote_mktemp()
+        temp_file_path = self.mktemp()
         args = [
             'sudo',
             'tar',
             zip_fld(zip_flag),
-            '-f', tempf,
+            '-f', temp_file_path,
             '-C', path,
             '--',
             '.',
             ]
-        return self._do_sftp_cmd(args, tempf, sudo)
+        return self._sftp_get_file(args, temp_file_path, sudo)
                 
 
 def getShortName(name):
